@@ -6,7 +6,9 @@ from sklearn.model_selection import train_test_split
 
 def random_traintest(n, X, y):
     '''
-    Randomly selects n test 
+    Randomly selects n test points in the data set
+    X: Covariate matrix
+    y: labels
     '''
     idx_test = np.random.choice(int(len(y)), int(n), replace=False)
     idx_train = [list(set(np.arange(len(y))) - set(idx_test))]
@@ -17,7 +19,13 @@ def random_traintest(n, X, y):
     return train_x, train_y, test_x, test_y
 
 
-def GaussianKernel(X1, X2,sigma):
+def GaussianKernel(X1, X2, sigma):
+    '''
+    Creates Gaussian Kernel based on matrix X1, X2 with std sigma
+    X1: Matrix 1
+    X2: Matrix 2
+    sigma: standard deviation of kernel
+    '''
     K = np.zeros((len(X1),len(X2)))
     for i in range(0, len(X1)):
         for j in range(0, len(X2)):
@@ -25,7 +33,18 @@ def GaussianKernel(X1, X2,sigma):
             K[i,j] = np.exp(-euclid/(2*sigma))
     return K
 
-def RVM(X_train, y, sigma, max_step = 1000, run_kernel = False, stop_s = 1e-6, alpha_init = None, alpha_prune = 1e6, intercept = None, ):
+def RVM(X_train, y, sigma, max_step = 1000, run_kernel = False, stop_s = 1e-6, alpha_init = None, alpha_prune = 1e6):
+    '''
+    Relevent Vector Machine implementation 
+    X_train: Training Data
+    y: label
+    sigma: standard deviation of gaussian kernel 
+    max_step: Max iterations to run trainint loop
+    run_kernel: boolean to run create kernelized matrix, can load csv
+    stop_s: Epsilon criterea to determine convergence. If the change in alpha does not exceed this value proceed to train.
+    alpha_init: Initialization of parameer alpha(relevence of a feature)
+    alpha_prune: High values of alpha correspond to "0" feature relevence, those features are pruned.      
+    '''
     N = len(y)
     if alpha_init is None: 
         alpha_init = np.ones(N)
@@ -65,104 +84,106 @@ def RVM(X_train, y, sigma, max_step = 1000, run_kernel = False, stop_s = 1e-6, a
         alpha_prior = alpha_posterior
     return mu, sigma_loop, delta, prune_idx
 
-data = pd.read_csv('sipp.csv')
-data = data.loc[(data['RIN_UNIV'] == 1) & (data['TPTOTINC'] > 0)]
-data = data[data['EJB1_TYPPAY1'].notna()] # change label as well 
-data['DIFF_TPTOTINC'] = data['TPTOTINC'].diff() #assuming data is sorted
-mask = data['SSUID'] != data['SSUID'].shift(1) # if it's different unit we don't want to take difference
-data['DIFF_TPTOTINC'][mask] = 0
-data['MEAN_WAVE'] = data.groupby(['SSUID','SWAVE']).TPTOTINC.transform('mean')
-data['MEAN_WAVE'] = (data['MEAN_WAVE'] - np.mean(data['MEAN_WAVE']))/data['MEAN_WAVE'].std()
-data['DIFF_TPTOTINC'] = (data['DIFF_TPTOTINC'] - np.mean(data['DIFF_TPTOTINC']))/data['DIFF_TPTOTINC'].std()
-data['EMPLOYED'] = data.apply(lambda x: 1 if x['RMESR'] <= 2 else 0, axis=1)
-train_data = data.loc[(data['MONTHCODE'] == 12) | (data['MONTHCODE'] == 11) | (data['MONTHCODE'] == 1)]
 
-#Set Train Data
-d = train_data['SEAM'].to_numpy().reshape(len(train_data),1)
-z = train_data[['MEAN_WAVE','DIFF_TPTOTINC']].to_numpy()
+if __name__ == "__main__":
+    data = pd.read_csv('sipp.csv')
+    data = data.loc[(data['RIN_UNIV'] == 1) & (data['TPTOTINC'] > 0)]
+    data = data[data['EJB1_TYPPAY1'].notna()] # change label as well 
+    data['DIFF_TPTOTINC'] = data['TPTOTINC'].diff() #assuming data is sorted
+    mask = data['SSUID'] != data['SSUID'].shift(1) # if it's different unit we don't want to take difference
+    data['DIFF_TPTOTINC'][mask] = 0
+    data['MEAN_WAVE'] = data.groupby(['SSUID','SWAVE']).TPTOTINC.transform('mean')
+    data['MEAN_WAVE'] = (data['MEAN_WAVE'] - np.mean(data['MEAN_WAVE']))/data['MEAN_WAVE'].std()
+    data['DIFF_TPTOTINC'] = (data['DIFF_TPTOTINC'] - np.mean(data['DIFF_TPTOTINC']))/data['DIFF_TPTOTINC'].std()
+    data['EMPLOYED'] = data.apply(lambda x: 1 if x['RMESR'] <= 2 else 0, axis=1)
+    train_data = data.loc[(data['MONTHCODE'] == 12) | (data['MONTHCODE'] == 11) | (data['MONTHCODE'] == 1)]
 
-#LS
-w_ls = np.linalg.inv(z.T@z) @ z.T @ d
-pred_ls = z @ w_ls
-pred_ls = np.array([(lambda l: 1 if l >= 0.5 else 0 )(l) for l in pred_ls])
-print("LS Seam Bias Detected: " + str(np.sum(pred_ls)))
+    #Set Train Data
+    d = train_data['SEAM'].to_numpy().reshape(len(train_data),1)
+    z = train_data[['MEAN_WAVE','DIFF_TPTOTINC']].to_numpy()
 
-#RVM and Prume
-print("Training RVM")
-mu, sigma_loop, delta, prune_idx = RVM(z, d, z.std(), run_kernel = True)
-print("Training RVM Done")
-print("Kernalizing all data, this might take a while")
-K = GaussianKernel(z, z, z.std())
-print("Kernalizing done")
-pruneK = K
-for i in range(0, len(prune_idx)):
-    pruneK = pruneK[prune_idx[i]]
-pred_rvm_prob = (mu.T @ pruneK).T
-pred_rvm = np.array([(lambda l: 1 if l >= 0.5 else 0 )(l) for l in pred_rvm_prob])
-print("LS Seam Bias Detected: " + str(np.sum(pred_rvm)))
+    #LS
+    w_ls = np.linalg.inv(z.T@z) @ z.T @ d
+    pred_ls = z @ w_ls
+    pred_ls = np.array([(lambda l: 1 if l >= 0.5 else 0 )(l) for l in pred_ls])
+    print("LS Seam Bias Detected: " + str(np.sum(pred_ls)))
 
-#Test for Next Stage
-z_all = data[['MEAN_WAVE','DIFF_TPTOTINC']].to_numpy()
-Kpred = GaussianKernel(z,z_all,z.std())
-pruneKpred = Kpred
-for i in range(0, len(prune_idx)):
-    pruneKpred = pruneKpred[prune_idx[i]]
-pred_rvm_prob = (mu.T @ pruneKpred).T
-data['SEAM_LS'] = z_all @ w_ls
-data['SEAM_BIAS_PROB'] = pred_rvm_prob
-data['SEAM_KRR'] = Kpred.T @ np.linalg.inv(K + 1e-12*np.eye(len(K))) @ d
+    #RVM and Prume
+    print("Training RVM")
+    mu, sigma_loop, delta, prune_idx = RVM(z, d, z.std(), run_kernel = True)
+    print("Training RVM Done")
+    print("Kernalizing all data, this might take a while")
+    K = GaussianKernel(z, z, z.std())
+    print("Kernalizing done")
+    pruneK = K
+    for i in range(0, len(prune_idx)):
+        pruneK = pruneK[prune_idx[i]]
+    pred_rvm_prob = (mu.T @ pruneK).T
+    pred_rvm = np.array([(lambda l: 1 if l >= 0.5 else 0 )(l) for l in pred_rvm_prob])
+    print("LS Seam Bias Detected: " + str(np.sum(pred_rvm)))
 
-#Train Test Split + Upsample
-data_majority = data[data.EMPLOYED==1]
-data_minority = data[data.EMPLOYED==0]
-data_minority_upsampled = resample(data_minority, 
-                                 replace=True,     
-                                 n_samples=len(data_majority),    
-                                 random_state= 0)
-data_up = pd.concat([data_majority, data_minority_upsampled])
+    #Test for Next Stage
+    z_all = data[['MEAN_WAVE','DIFF_TPTOTINC']].to_numpy()
+    Kpred = GaussianKernel(z,z_all,z.std())
+    pruneKpred = Kpred
+    for i in range(0, len(prune_idx)):
+        pruneKpred = pruneKpred[prune_idx[i]]
+    pred_rvm_prob = (mu.T @ pruneKpred).T
+    data['SEAM_LS'] = z_all @ w_ls
+    data['SEAM_BIAS_PROB'] = pred_rvm_prob
+    data['SEAM_KRR'] = Kpred.T @ np.linalg.inv(K + 1e-12*np.eye(len(K))) @ d
 
-#Probability from RVM
-X = data_up[['DIFF_TPTOTINC','MEAN_WAVE', 'SEAM_BIAS_PROB']].to_numpy()
-y = data_up['EMPLOYED'].to_numpy().reshape((len(data_up),1))
-RVM_error = []
-for i in [0, 253, 1738, 90210]:
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=i)
-    ypred = X_test @ np.linalg.inv(X_train.T @ X_train) @ X_train.T @ y_train
-    ypred_label = np.array([(lambda l: 1 if l >= 0.5 else 0 )(l) for l in ypred]).reshape(len(ypred),1)
-    RVM_error.append(np.sum(ypred_label != y_test)/len(y_test))
-print("Mean Error using RVM output:" + str(np.mean(RVM_error)))
+    #Train Test Split + Upsample
+    data_majority = data[data.EMPLOYED==1]
+    data_minority = data[data.EMPLOYED==0]
+    data_minority_upsampled = resample(data_minority, 
+                                    replace=True,     
+                                    n_samples=len(data_majority),    
+                                    random_state= 0)
+    data_up = pd.concat([data_majority, data_minority_upsampled])
 
-#Retaining Orthogonal Components
-X = data_up[['DIFF_TPTOTINC','MEAN_WAVE', 'SEAM_LS']].to_numpy()
-y = data_up['EMPLOYED'].to_numpy().reshape((len(data_up),1))
-LS_error = []
-for i in [0, 253, 1738, 90210]:
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=0)
-    ypred = X_test @ np.linalg.inv(X_train.T @ X_train + 1e-12*np.eye(len(X_train.T))) @ X_train.T @ y_train
-    ypred_label = np.array([(lambda l: 1 if l >= 0.5 else 0 )(l) for l in ypred]).reshape(len(ypred),1)
-    LS_error.append(np.sum(ypred_label != y_test)/len(y_test))
-print("Mean Error using LS output:" + str(np.mean(LS_error)))
+    #Probability from RVM
+    X = data_up[['DIFF_TPTOTINC','MEAN_WAVE', 'SEAM_BIAS_PROB']].to_numpy()
+    y = data_up['EMPLOYED'].to_numpy().reshape((len(data_up),1))
+    RVM_error = []
+    for i in [0, 253, 1738, 90210]:
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=i)
+        ypred = X_test @ np.linalg.inv(X_train.T @ X_train) @ X_train.T @ y_train
+        ypred_label = np.array([(lambda l: 1 if l >= 0.5 else 0 )(l) for l in ypred]).reshape(len(ypred),1)
+        RVM_error.append(np.sum(ypred_label != y_test)/len(y_test))
+    print("Mean Error using RVM output:" + str(np.mean(RVM_error)))
 
-
-#Gaussian Kernel Ridge
-X = data_up[['DIFF_TPTOTINC','MEAN_WAVE', 'SEAM_KRR']].to_numpy()
-y = data_up['EMPLOYED'].to_numpy().reshape((len(data_up),1))
-KRR_error = []
-for i in [0, 253, 1738, 90210]:
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=0)
-    ypred = X_test @ np.linalg.inv(X_train.T @ X_train + 1e-12*np.eye(len(X_train.T))) @ X_train.T @ y_train
-    ypred_label = np.array([(lambda l: 1 if l >= 0.5 else 0 )(l) for l in ypred]).reshape(len(ypred),1)
-    KRR_error.append(np.sum(ypred_label != y_test)/len(y_test))
-print("Mean Error using KRR output:" + str(np.mean(KRR_error)))
+    #Retaining Orthogonal Components
+    X = data_up[['DIFF_TPTOTINC','MEAN_WAVE', 'SEAM_LS']].to_numpy()
+    y = data_up['EMPLOYED'].to_numpy().reshape((len(data_up),1))
+    LS_error = []
+    for i in [0, 253, 1738, 90210]:
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=0)
+        ypred = X_test @ np.linalg.inv(X_train.T @ X_train + 1e-12*np.eye(len(X_train.T))) @ X_train.T @ y_train
+        ypred_label = np.array([(lambda l: 1 if l >= 0.5 else 0 )(l) for l in ypred]).reshape(len(ypred),1)
+        LS_error.append(np.sum(ypred_label != y_test)/len(y_test))
+    print("Mean Error using LS output:" + str(np.mean(LS_error)))
 
 
-#Dummy
-X = data_up[['DIFF_TPTOTINC','MEAN_WAVE', 'SEAM']].to_numpy()
-y = data_up['EMPLOYED'].to_numpy().reshape((len(data_up),1))
-Dummy_error = []
-for i in [0, 253, 1738, 90210]:
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=0)
-    ypred = X_test @ np.linalg.inv(X_train.T @ X_train + 1e-12*np.eye(len(X_train.T))) @ X_train.T @ y_train
-    ypred_label = np.array([(lambda l: 1 if l >= 0.5 else 0)(l) for l in ypred]).reshape(len(ypred),1)
-    Dummy_error.append(np.sum(ypred_label != y_test)/len(y_test))
-print("Mean Error using Dummy output:" + str(np.mean(Dummy_error)))
+    #Gaussian Kernel Ridge
+    X = data_up[['DIFF_TPTOTINC','MEAN_WAVE', 'SEAM_KRR']].to_numpy()
+    y = data_up['EMPLOYED'].to_numpy().reshape((len(data_up),1))
+    KRR_error = []
+    for i in [0, 253, 1738, 90210]:
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=0)
+        ypred = X_test @ np.linalg.inv(X_train.T @ X_train + 1e-12*np.eye(len(X_train.T))) @ X_train.T @ y_train
+        ypred_label = np.array([(lambda l: 1 if l >= 0.5 else 0 )(l) for l in ypred]).reshape(len(ypred),1)
+        KRR_error.append(np.sum(ypred_label != y_test)/len(y_test))
+    print("Mean Error using KRR output:" + str(np.mean(KRR_error)))
+
+
+    #Dummy
+    X = data_up[['DIFF_TPTOTINC','MEAN_WAVE', 'SEAM']].to_numpy()
+    y = data_up['EMPLOYED'].to_numpy().reshape((len(data_up),1))
+    Dummy_error = []
+    for i in [0, 253, 1738, 90210]:
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=0)
+        ypred = X_test @ np.linalg.inv(X_train.T @ X_train + 1e-12*np.eye(len(X_train.T))) @ X_train.T @ y_train
+        ypred_label = np.array([(lambda l: 1 if l >= 0.5 else 0)(l) for l in ypred]).reshape(len(ypred),1)
+        Dummy_error.append(np.sum(ypred_label != y_test)/len(y_test))
+    print("Mean Error using Dummy output:" + str(np.mean(Dummy_error)))
